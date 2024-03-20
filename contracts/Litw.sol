@@ -1,35 +1,20 @@
 //SPDX-License-Identifier: MIT
-pragma solidity ^0.8.9;
+pragma solidity ^0.8.22;
 
 /*
-██╗     ███████╗ █████╗ ███╗   ██╗    ██╗███╗   ██╗████████╗ ██████╗     ████████╗██╗  ██╗███████╗    ██╗    ██╗██╗███╗   ██╗██████╗ 
+██╗     ███████╗ █████╗ ███╗   ██╗    ██╗███╗   ██╗████████╗ ██████╗     ████████╗██╗  ██╗███████╗    ██╗    ██╗██╗███╗   ██╗██████╗
 ██║     ██╔════╝██╔══██╗████╗  ██║    ██║████╗  ██║╚══██╔══╝██╔═══██╗    ╚══██╔══╝██║  ██║██╔════╝    ██║    ██║██║████╗  ██║██╔══██╗
 ██║     █████╗  ███████║██╔██╗ ██║    ██║██╔██╗ ██║   ██║   ██║   ██║       ██║   ███████║█████╗      ██║ █╗ ██║██║██╔██╗ ██║██║  ██║
 ██║     ██╔══╝  ██╔══██║██║╚██╗██║    ██║██║╚██╗██║   ██║   ██║   ██║       ██║   ██╔══██║██╔══╝      ██║███╗██║██║██║╚██╗██║██║  ██║
 ███████╗███████╗██║  ██║██║ ╚████║    ██║██║ ╚████║   ██║   ╚██████╔╝       ██║   ██║  ██║███████╗    ╚███╔███╔╝██║██║ ╚████║██████╔╝
-╚══════╝╚══════╝╚═╝  ╚═╝╚═╝  ╚═══╝    ╚═╝╚═╝  ╚═══╝   ╚═╝    ╚═════╝        ╚═╝   ╚═╝  ╚═╝╚══════╝     ╚══╝╚══╝ ╚═╝╚═╝  ╚═══╝╚═════╝ 
+╚══════╝╚══════╝╚═╝  ╚═╝╚═╝  ╚═══╝    ╚═╝╚═╝  ╚═══╝   ╚═╝    ╚═════╝        ╚═╝   ╚═╝  ╚═╝╚══════╝     ╚══╝╚══╝ ╚═╝╚═╝  ╚═══╝╚═════╝
 */
-
 
 import "erc721a/contracts/extensions/ERC721AQueryable.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/utils/cryptography/MerkleProof.sol";
 
-
-error SoldOut();
-error SaleNotStarted();
-error MintingTooMany();
-error NotWhitelisted();
-error MintedOut();
-error ArraysDontMatch();
-error NotEnoughEthSent();
-error WhitelistUnavailible();
-error AttemtedMaxSupplyIncrease();
-
-
-
-contract Litw is ERC721AQueryable, Ownable{
-
+contract Litw is ERC721AQueryable, Ownable {
     uint public maxSupply = 3333;
     uint public publicPrice = 0.01 ether;
     uint public maxPerOG = 2;
@@ -40,28 +25,63 @@ contract Litw is ERC721AQueryable, Ownable{
     string public uriSuffix = ".json";
     bool public revealed;
 
-    enum SaleStatus {INACTIVE, OG, WHITELIST, PUBLIST, PUBLIC}
-    SaleStatus public saleStatus = SaleStatus.INACTIVE;
+    enum SaleStatus {
+        INACTIVE,
+        OG,
+        WHITELIST,
+        PUBLIST,
+        PUBLIC
+    }
 
+    SaleStatus public saleStatus = SaleStatus.INACTIVE;
 
     bytes32 private merkleTreeRoot;
     mapping(address => uint256) public publicMintedPerwallet;
 
+    error SoldOut();
+    error SaleNotStarted();
+    error MintingTooMany();
+    error NotWhitelisted();
+    error MintedOut();
+    error ArraysDontMatch();
+    error InvalidEthValueSent();
+    error WhitelistUnavailable();
+    error AttemptedMaxSupplyIncrease();
 
-
-    constructor() 
-    ERC721A("Lean Into The Wind", "LITW") Ownable(msg.sender)
-    {
-        setNotRevealedURI("https://ipfs.io/ipfs/QmR7ApRD42gAW8dhwHQys8hvK9GaPp6BsTLNWrCBkPhVEg/hidden.json");
+    modifier isLive(SaleStatus status) {
+        if (saleStatus != status) revert SaleNotStarted();
+        _;
     }
 
+    modifier isWhitelisted(bytes32 _merkleRoot, bytes32[] calldata _proof) {
+        if (_merkleRoot == 0) revert WhitelistUnavailable();
+        bytes32 leaf = keccak256(abi.encodePacked(_msgSenderERC721A()));
+        if (MerkleProof.processProof(_proof, leaf) != _merkleRoot)
+            revert NotWhitelisted();
+        _;
+    }
 
+    modifier withinThreshold(uint256 amount, uint256 maxAmount) {
+        if (totalSupply() + amount > maxSupply) revert SoldOut();
+        if (_numberMinted(_msgSenderERC721A()) + amount > maxAmount)
+            revert MintingTooMany();
+        _;
+    }
 
-    function airdrop(address[] calldata accounts, uint[] calldata amounts) external onlyOwner {
-        if(accounts.length != amounts.length) revert ArraysDontMatch();
+    constructor() ERC721A("Lean Into The Wind", "LITW") Ownable(msg.sender) {
+        setNotRevealedURI(
+            "https://ipfs.io/ipfs/QmR7ApRD42gAW8dhwHQys8hvK9GaPp6BsTLNWrCBkPhVEg/hidden.json"
+        );
+    }
+
+    function airdrop(
+        address[] calldata accounts,
+        uint[] calldata amounts
+    ) external onlyOwner {
+        if (accounts.length != amounts.length) revert ArraysDontMatch();
         uint supply = totalSupply();
-        for(uint i; i < accounts.length; i++){
-            if(supply + amounts[i] > maxSupply) revert SoldOut();
+        for (uint i; i < accounts.length; i++) {
+            if (supply + amounts[i] > maxSupply) revert SoldOut();
             supply += amounts[i];
             _mint(accounts[i], amounts[i]);
         }
@@ -71,100 +91,91 @@ contract Litw is ERC721AQueryable, Ownable{
                            MINT MECHANICS
     //////////////////////////////////////////////////////////////*/
 
-    function ogMint(bytes32[] memory proof, uint amount) external {
-        if(saleStatus != SaleStatus.OG) revert SaleNotStarted();
-        if(totalSupply() + amount > maxSupply) revert SoldOut();
-        //check whitelist
-        if (merkleTreeRoot == 0) revert WhitelistUnavailible();
-        bytes32 leaf = keccak256(abi.encodePacked(_msgSender()));
-        bool isWhitelisted =  MerkleProof.processProof(proof, leaf) == merkleTreeRoot;
-        if (!isWhitelisted) revert NotWhitelisted();
-        //check whitelist end
-        if(_numberMinted(_msgSender()) + amount > maxPerOG) revert MintingTooMany();
-        _mint(_msgSender(),amount);
+    function ogMint(
+        bytes32[] calldata proof,
+        uint amount
+    )
+        external
+        isLive(SaleStatus.OG)
+        withinThreshold(amount, maxPerOG)
+        isWhitelisted(merkleTreeRoot, proof)
+    {
+        _mint(_msgSenderERC721A(), amount);
     }
 
-
-
-
-
-    function whiteListMint(bytes32[] memory proof, uint amount) external {
-        if(saleStatus != SaleStatus.WHITELIST) revert SaleNotStarted();
-        if(totalSupply() + amount > maxSupply) revert SoldOut();
-        //check whitelist
-        if (merkleTreeRoot == 0) revert WhitelistUnavailible();
-        bytes32 leaf = keccak256(abi.encodePacked(_msgSender()));
-        bool isWhitelisted =  MerkleProof.processProof(proof, leaf) == merkleTreeRoot;
-        if (!isWhitelisted) revert NotWhitelisted();
-        //check whitelist end
-        if(_numberMinted(_msgSender()) + amount > maxPerWL) revert MintingTooMany();
-        _mint(_msgSender(),amount);
+    function whiteListMint(
+        bytes32[] calldata proof,
+        uint amount
+    )
+        external
+        isLive(SaleStatus.WHITELIST)
+        withinThreshold(amount, maxPerWL)
+        isWhitelisted(merkleTreeRoot, proof)
+    {
+        _mint(_msgSenderERC721A(), amount);
     }
 
-
-    function pubListMint(bytes32[] memory proof, uint amount) external payable {
-        if(saleStatus != SaleStatus.PUBLIST) revert SaleNotStarted();
-        if(totalSupply() + amount > maxSupply) revert SoldOut();
-        if(msg.value < amount * publicPrice) revert NotEnoughEthSent();
-        //check whitelist
-        if (merkleTreeRoot == 0) revert WhitelistUnavailible();
-        bytes32 leaf = keccak256(abi.encodePacked(_msgSender()));
-        bool isWhitelisted =  MerkleProof.processProof(proof, leaf) == merkleTreeRoot;
-        if (!isWhitelisted) revert NotWhitelisted();
-        //check whitelist end
-        if(_numberMinted(_msgSender()) + amount > maxPerWL) revert MintingTooMany();
-        _mint(_msgSender(),amount);
+    function pubListMint(
+        bytes32[] calldata proof,
+        uint amount
+    )
+        external
+        payable
+        isLive(SaleStatus.PUBLIST)
+        withinThreshold(amount, maxPerWL)
+        isWhitelisted(merkleTreeRoot, proof)
+    {
+        if (msg.value != amount * publicPrice) revert InvalidEthValueSent();
+        _mint(_msgSenderERC721A(), amount);
     }
 
+    function publicMint(
+        uint amount
+    ) external payable isLive(SaleStatus.PUBLIC) {
+        if (totalSupply() + amount > maxSupply) revert SoldOut();
+        if (msg.value != amount * publicPrice) revert InvalidEthValueSent();
 
-    function publicMint(uint amount) external payable {
-        if(saleStatus != SaleStatus.PUBLIC) revert SaleNotStarted();
-        if(totalSupply() + amount > maxSupply) revert SoldOut();
-        if(msg.value < amount * publicPrice) revert NotEnoughEthSent();
+        address sender = _msgSenderERC721A();
+        uint256 senderPublicMints = publicMintedPerwallet[sender] + amount;
 
-        if(publicMintedPerwallet[_msgSender()] + amount > maxPerWL) revert MintingTooMany();
-        
-        publicMintedPerwallet[_msgSender()] += amount;
-        _mint(_msgSender(),amount);
+        if (senderPublicMints > maxPerWL) revert MintingTooMany();
+        publicMintedPerwallet[sender] += amount;
+        _mint(sender, amount);
     }
-
 
     /*///////////////////////////////////////////////////////////////
                           Switch Sale Status
     //////////////////////////////////////////////////////////////*/
 
-
-    function setOGMintOn() external onlyOwner{
+    function setOGMintOn() external onlyOwner {
         saleStatus = SaleStatus.OG;
     }
 
-    function setWhiteListMintOn() external onlyOwner{
+    function setWhiteListMintOn() external onlyOwner {
         saleStatus = SaleStatus.WHITELIST;
     }
 
-    function setPubListMintOn() external onlyOwner{
+    function setPubListMintOn() external onlyOwner {
         saleStatus = SaleStatus.PUBLIST;
     }
 
-    function setPublicMintOn() external onlyOwner{
+    function setPublicMintOn() external onlyOwner {
         saleStatus = SaleStatus.PUBLIC;
     }
 
-    function turnSalesOff() external onlyOwner{
+    function turnSalesOff() external onlyOwner {
         saleStatus = SaleStatus.INACTIVE;
     }
-
 
     /*///////////////////////////////////////////////////////////////
                                 UTILS
     //////////////////////////////////////////////////////////////*/
 
-
     function setNotRevealedURI(string memory _notRevealedURI) public onlyOwner {
         notRevealedURI = _notRevealedURI;
     }
 
-    function setBaseURI(string memory _baseURI) external onlyOwner{
+    function setBaseURI(string memory _baseURI) external onlyOwner {
         baseURI = _baseURI;
     }
 
@@ -187,37 +198,36 @@ contract Litw is ERC721AQueryable, Ownable{
     function setMaxPerOG(uint _maxPerOG) external onlyOwner {
         maxPerOG = _maxPerOG;
     }
-    
+
     function setMaxPerWL(uint _maxPerWL) external onlyOwner {
         maxPerWL = _maxPerWL;
     }
-    
 
     function updateMaxSupply(uint _maxSupply) external onlyOwner {
-        if(_maxSupply > maxSupply) revert AttemtedMaxSupplyIncrease();
+        if (_maxSupply > maxSupply) revert AttemptedMaxSupplyIncrease();
         maxSupply = _maxSupply;
     }
-
 
     /*///////////////////////////////////////////////////////////////
                             METADATA FACTORY
     //////////////////////////////////////////////////////////////*/
 
-
-    function tokenURI(uint256 tokenId)
-        public
-        view
-        override(ERC721A, IERC721A)
-        returns (string memory)
-    {
+    function tokenURI(
+        uint256 tokenId
+    ) public view override(ERC721A, IERC721A) returns (string memory) {
         if (revealed == false) {
             return notRevealedURI;
         }
-
         string memory currentBaseURI = baseURI;
         return
             bytes(currentBaseURI).length > 0
-                ? string(abi.encodePacked(currentBaseURI, _toString(tokenId),uriSuffix))
+                ? string(
+                    abi.encodePacked(
+                        currentBaseURI,
+                        _toString(tokenId),
+                        uriSuffix
+                    )
+                )
                 : "";
     }
 
@@ -229,7 +239,4 @@ contract Litw is ERC721AQueryable, Ownable{
         (bool os, ) = payable(owner()).call{value: address(this).balance}("");
         require(os);
     }
-
 }
-
-
